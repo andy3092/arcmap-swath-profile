@@ -41,7 +41,7 @@ def row_stats(array, pixel_size):
     maximum = np.amax(array, axis=1)
     #median = np.median(array, axis=1)
     std = np.std(array, axis=1)
-    minus_std = mean - std
+    minus_1std = mean - std
     plus_1std = mean + std
     kurtosis = scipy.stats.kurtosis(array, axis=1, fisher=True, bias=True)
     
@@ -54,7 +54,8 @@ def row_stats(array, pixel_size):
     #logging.debug('upper quartile: {}'.format(upper_quatile))
     #logging.debug('distance: {}'.format(distance))
     
-    return np.column_stack((distance, maximum, minimum, mean, std, minus_std, plus_1std, kurtosis))
+    return np.column_stack((distance, maximum, minimum, mean, std, minus_1std, 
+                            plus_1std, kurtosis))
 
 def main(dem_raster, stats_type, profile_line, output_table):
     """
