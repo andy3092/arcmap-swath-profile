@@ -60,6 +60,9 @@ def main(profile_line, dem, swath_width, output_csv):
     buffer distance as linar units e.g. ("5 Meters")
     outputfile_name
     """
+    # Set enviromntal variables
+    arcpy.env.overwriteOutput = True
+    
     # Collect data from our input layers
     #arcpy.AddMessage("No DataValue: {}".format(dem_nodata))                                                             
     spatail_reference = arcpy.Describe(profile_line).spatialReference
@@ -78,38 +81,56 @@ def main(profile_line, dem, swath_width, output_csv):
             buffer_fc = 'in_memory//buffer'
             # Need to halve the width to get the correct buffer distance
             buffer_distance = float(swath_width.split()[0])/2 
-            buffer_linear_units = "{} {}".format(buffer_distance, swath_width.split()[1])
+            buffer_linear_units = "{} {}".format(buffer_distance, 
+                                                 swath_width.split()[1])
             arcpy.AddMessage("Buffering the profile line by: {}".format(buffer_linear_units))
             arcpy.Buffer_analysis(line, buffer_fc, 
-                              buffer_distance, "FULL", "FLAT", "NONE", "", "GEODESIC")
+                                  buffer_distance, 
+                                  "FULL", 
+                                  "FLAT", 
+                                  "NONE", "", 
+                                  "GEODESIC")
 
             # Clip the dem to the buffer
             arcpy.AddMessage("Clipping the raster by the buffer")
-            output_clip = "in_memory//clip"
-            arcpy.Clip_management(dem, "", output_clip, buffer_fc, "", "ClippingGeometry", 
+            output_clip = "{}\\clip".format(arcpy.env.scratchGDB)
+            arcpy.Clip_management(dem, "", 
+                                  output_clip, buffer_fc,
+                                  "", "ClippingGeometry", 
                                   "MAINTAIN_EXTENT")
 
             # Roate the dem so that it is upright
             bearing = north_bearing(line.firstPoint, line.lastPoint)
             rotation = rotation_angle(bearing) 
             arcpy.AddMessage("Rotating raster by {}".format(rotation))
-            out_rotate = "in_memory//rotate"
+            out_rotate = "{}\\rotate".format(arcpy.env.scratchGDB)
             arcpy.Rotate_management(output_clip, out_rotate, rotation)
+
+            # Clean up any objects in memory to date
+            arcpy.Delete_management(buffer_fc)
+            del buffer_fc
+            arcpy.Delete_management(output_clip)
+            del output_clip
 
             # Convert the dem to a numpy array and prepear it for the stats
             # need to skip nodata values in array
             # need to stip out lines of nodata
+            # This needs to be done in bloks or else we run out of memory.
+
             arcpy.AddMessage("Converting the roated dem to a numpy array")
-            dem_array = arcpy.RasterToNumPyArray(out_rotate, nodata_to_value=-9999)
-            dem_array_skip_nd = np.ma.masked_array(dem_array, dem_array == -9999)
+            dem_array = arcpy.RasterToNumPyArray(out_rotate, 
+                                                 nodata_to_value=-9999)
+            dem_array_skip_nd = np.ma.masked_array(dem_array, 
+                                                   dem_array == -9999)
             mask_nd_rows = np.all(np.isnan(dem_array_skip_nd), axis=1)
             dem_arr = dem_array_skip_nd[~mask_nd_rows]
 
             # Run the Stats and save the output csv file
-            dem_cellsize_result = arcpy.GetRasterProperties_management(out_rotate, "CELLSIZEY")
-            dem_cell_size = dem_cellsize_result.getOutput(0)
+            dem_cellsize_result = arcpy.GetRasterProperties_management(dem, "CELLSIZEY")
+            dem_cell_size = float(dem_cellsize_result.getOutput(0))
             stats = row_stats(dem_arr, dem_cell_size)
-            arcpy.AddMessage("Writing () to disk.".format(output_csv))
+            arcpy.AddMessage("Pixel Size: {} ".format(dem_cell_size))
+            arcpy.AddMessage("Writing {} to disk.".format(output_csv))
             np.savetxt(output_csv, stats, 
                        header="distance, max, min, mean, std, minus_1std, plus_1std, kurtosis", 
                        fmt='%1d,  %1.3f,  %1.3f,  %1.3f, %1.3f, %1.3f, %1.3f, %1.3f', 
