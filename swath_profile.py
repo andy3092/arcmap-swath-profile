@@ -4,7 +4,8 @@ import collections
 
 import numpy as np
 import scipy.stats
-#import arcpy
+import arcpy
+import block_processing
 
 #-----------------------------------------
 # Set up logging 
@@ -27,11 +28,11 @@ def rotation_angle(north_bearing):
     the first point entered for the profile line is at 
     the top of the dem.
     """
-    return 180 - north_bearing
+    return 360 - north_bearing
 
 def row_stats(array, pixel_size):
     """
-    Takes a numpy array and pixcel size. Returns a table of the 
+    Takes a numpy array and pixel size. Returns a table of the 
     stats for each row. Min, Max, Mean, std. That can then be used for
     plotting swath graphs. 
     """
