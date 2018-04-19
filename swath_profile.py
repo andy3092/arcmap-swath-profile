@@ -28,46 +28,66 @@ def rotation_angle(north_bearing):
     the first point entered for the profile line is at 
     the top of the dem.
     """
-    return 360 - north_bearing
+    return north_bearing * -1
 
-def row_stats(array, pixel_size):
+def row_stats(numpy_array):
     """
-    Takes a numpy array and pixel size. Returns a table of the 
+    Takes a numpy array. Returns a table of the 
     stats for each row. Min, Max, Mean, std. That can then be used for
     plotting swath graphs. 
+    The function throws a ValueError if a line of 
+    NoData is passed to it.
     """
-    number_rows = np.shape(array)[0]
-    distance = np.arange(0, number_rows * pixel_size, pixel_size)
-    mean = np.mean(array, axis=1)
-    minimum = np.amin(array, axis=1)
-    maximum = np.amax(array, axis=1)
-    #median = np.median(array, axis=1)
-    std = np.std(array, axis=1)
+    number_rows = np.size(numpy_array, axis=0)
+    mean = np.mean(numpy_array, axis=1)
+    minimum = np.amin(numpy_array, axis=1)
+    maximum = np.amax(numpy_array, axis=1)
+    std = np.std(numpy_array, axis=1)
     minus_1std = mean - std
     plus_1std = mean + std
-    kurtosis = scipy.stats.kurtosis(array, axis=1, fisher=True, bias=True)
+    kurtosis = scipy.stats.kurtosis(numpy_array, axis=1, fisher=True, bias=True)
     
     #logging.debug('distance: {}'.format(distance))
     
-    return np.column_stack((distance, maximum, minimum, mean, std, minus_1std, 
+    #arcpy.AddMessage(distance)
+    #arcpy.AddMessage(maximum)
+    #arcpy.AddMessage(minimum)
+    #arcpy.AddMessage(mean)
+    #arcpy.AddMessage(std)
+    #arcpy.AddMessage(minus_1std)
+    #arcpy.AddMessage(plus_1std)
+    #arcpy.AddMessage(kurtosis)
+
+    return np.column_stack((maximum, minimum, mean, std, minus_1std, 
                             plus_1std, kurtosis))
 
-def main(profile_line, dem, swath_width, output_csv):
+def main(profile_line, in_raster, swath_width, output_csv, 
+         ncols=None, nrows=None):
     """
     The main processing of the data and extraction 
-    of the profile data. Takes a
+    of the profile data.
+
+    Arguments:
     line feature class or feature set
     raster dem 
     buffer distance as linar units e.g. ("5 Meters")
-    outputfile_name
+    outputfile csv name
+    Optional arguments
+    ncols numbger of rows default is the raster height
+    nrows number of columns default is the raster width
+
+    The main function buffers the profile line, then clips
+    the raster and roates it so that it runs from north to south
+    witth a bearing of 0 degrees.
+    The raster is then found for each row and placed in a csv file
     """
     # Set enviromntal variables
     arcpy.env.overwriteOutput = True
-    
-    # Collect data from our input layers
-    #arcpy.AddMessage("No DataValue: {}".format(dem_nodata))                                                             
-    spatail_reference = arcpy.Describe(profile_line).spatialReference
 
+    # Collect data from our input layers
+    spatail_reference = arcpy.Describe(profile_line).spatialReference
+    arcpy.AddMessage("spatial reference is:{}".format(spatail_reference.name))
+    
     cursor = arcpy.da.SearchCursor(profile_line, ["SHAPE@"])
     SHAPE_INDEX = 0
     for feature in cursor:
@@ -79,39 +99,39 @@ def main(profile_line, dem, swath_width, output_csv):
             arcpy.AddMessage("last Y: {}".format(line.lastPoint.Y))
         
             # Buffer the profile line 
-            buffer_fc = 'in_memory//buffer'
+            #buffer_fc = "{}\\buffer".format(arcpy.env.scratchGDB)
+            buffer_fc = "in_memory\\buffer"
             # Need to halve the width to get the correct buffer distance
             buffer_distance = float(swath_width.split()[0])/2 
             buffer_linear_units = "{} {}".format(buffer_distance, 
                                                  swath_width.split()[1])
-            arcpy.AddMessage("Buffering the profile line by: {}".format(buffer_linear_units))
+            arcpy.AddMessage("Buffering the profile line by: {}"
+                             .format(buffer_linear_units))
             arcpy.Buffer_analysis(line, buffer_fc, 
-                                  buffer_distance, 
+                                  buffer_linear_units, 
                                   "FULL", 
                                   "FLAT", 
                                   "NONE", "", 
                                   "GEODESIC")
-
+            
             # Clip the dem to the buffer
             arcpy.AddMessage("Clipping the raster by the buffer")
             output_clip = "{}\\clip".format(arcpy.env.scratchGDB)
             arcpy.Clip_management(dem, "", 
                                   output_clip, buffer_fc,
-                                  "", "ClippingGeometry", 
-                                  "MAINTAIN_EXTENT")
+                                  "", "ClippingGeometry") 
+                                  #"MAINTAIN_EXTENT")
 
             # Roate the dem so that it is upright
             bearing = north_bearing(line.firstPoint, line.lastPoint)
             rotation = rotation_angle(bearing) 
-            arcpy.AddMessage("Rotating raster by {}".format(rotation))
-            out_rotate = "{}\\rotate".format(arcpy.env.scratchGDB)
-            arcpy.Rotate_management(output_clip, out_rotate, rotation)
-
-            # Clean up any objects in memory to date
-            arcpy.Delete_management(buffer_fc)
-            del buffer_fc
-            arcpy.Delete_management(output_clip)
-            del output_clip
+            if rotation <= 1:
+                arcpy.AddMessage("No rotation needed")
+                out_rotate = output_clip
+            else:
+                arcpy.AddMessage("Rotating raster by {}".format(rotation))
+                out_rotate = "{}\\rotate".format(arcpy.env.scratchGDB)
+                arcpy.Rotate_management(output_clip, out_rotate, rotation)
 
             # Convert the dem to a numpy array and prepear it for the stats
             # need to skip nodata values in array
@@ -119,24 +139,45 @@ def main(profile_line, dem, swath_width, output_csv):
             # This needs to be done in bloks or else we run out of memory.
 
             arcpy.AddMessage("Converting the roated dem to a numpy array")
-            dem_array = arcpy.RasterToNumPyArray(out_rotate, 
-                                                 nodata_to_value=-9999)
-            dem_array_skip_nd = np.ma.masked_array(dem_array, 
-                                                   dem_array == -9999)
-            mask_nd_rows = np.all(np.isnan(dem_array_skip_nd), axis=1)
-            dem_arr = dem_array_skip_nd[~mask_nd_rows]
+            dem_raster = arcpy.Raster(out_rotate)
+            dem_cell_size = int(dem_raster.meanCellWidth)
+            stats_result = None
 
-            # Run the Stats and save the output csv file
-            dem_cellsize_result = arcpy.GetRasterProperties_management(dem, "CELLSIZEY")
-            dem_cell_size = float(dem_cellsize_result.getOutput(0))
-            stats = row_stats(dem_arr, dem_cell_size)
             arcpy.AddMessage("Pixel Size: {} ".format(dem_cell_size))
-            arcpy.AddMessage("Writing {} to disk.".format(output_csv))
-            np.savetxt(output_csv, stats, 
+            dem_blocks = block_processing.EnumRasterToNumPyArray(out_rotate, 
+                                                                 num_rows=nrows)
+            for dem_array in dem_blocks:
+                dem_array_skip_nd = np.ma.masked_array(dem_array, 
+                                                       dem_array == -9999)
+                mask_nd_rows = np.all(np.isnan(dem_array_skip_nd), axis=1)
+                dem_arr = dem_array_skip_nd[~mask_nd_rows]
+                # Need to flip it as the array starts at the bottom 
+                # lefthand corner
+                dem_arr_flip = np.flipud(dem_arr)
+                try:
+                    stats = row_stats(dem_arr_flip)
+                except ValueError: 
+                    continue
+                if stats_result is None:
+                    stats_result = stats
+                else:
+                    stats_result = np.vstack((stats_result, stats))
+            
+            number_rows = np.size(stats_result, axis=0)
+            distance = np.arange(0, number_rows * dem_cell_size, dem_cell_size)
+            distance_reshape = distance.reshape(number_rows, 1)
+            distance_stats = np.hstack((distance_reshape, stats_result))
+            arcpy.AddMessage("Writing {} to disk.".format(output_csv))    
+            np.savetxt(output_csv, distance_stats, 
                        header="distance, max, min, mean, std, minus_1std, plus_1std, kurtosis", 
                        fmt='%1d,  %1.3f,  %1.3f,  %1.3f, %1.3f, %1.3f, %1.3f, %1.3f', 
                        comments='')
 
+            # Clean up
+            file_list = [out_rotate, output_clip, buffer_fc]
+            for file_item in file_list:
+                if arcpy.Exists(file_item):
+                    arcpy.Delete_management(file_item)
         
 def test():
     # Set up some dummy lines
@@ -172,16 +213,7 @@ if __name__ == "__main__":
     swath_width = arcpy.GetParameterAsText(1)
     profile_line = arcpy.GetParameter(2)
     output_csv = arcpy.GetParameterAsText(3)
-    main(profile_line, dem, swath_width, output_csv)
-
-
-    # Get the parameters
-    #input_raster = arcpy.GetParameterAsText(0)
-    #stats_type = arcpy.GetParameterAsText(1)
-    #output_raster_name = arcpy.GetParameterAsText(2)
-    #profile_line = arcpy.GetParameter(3)
-
-    #test()
+    main(profile_line, dem, swath_width, output_csv, nrows=100)
 
 
 

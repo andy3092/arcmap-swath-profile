@@ -28,8 +28,8 @@ def EnumRasterToNumPyArray(input_raster, num_cols=None, num_rows=None):
     if num_rows is None:
         num_rows = my_raster.height
 
-    arcpy.AddMessage("Number of rows: {}".format(num_rows))
-    arcpy.AddMessage("Number Columns: {}".format(num_cols))
+    #arcpy.AddMessage("Number of rows: {}".format(num_rows))
+    #arcpy.AddMessage("Number Columns: {}".format(num_cols))
 
     for x in range(0, my_raster.width, num_cols):
         for y in range(0, my_raster.height, num_rows):
@@ -38,13 +38,13 @@ def EnumRasterToNumPyArray(input_raster, num_cols=None, num_rows=None):
             lx = min([x + num_cols, my_raster.width])
             ly = min([y + num_rows, my_raster.height])   
             my_data = arcpy.RasterToNumPyArray(my_raster, arcpy.Point(mx, my),
-                                               ncols=lx-x, nrows=ly-y)
-        
+                                               ncols=lx-x, nrows=ly-y,
+                                               nodata_to_value=-9999)
             yield my_data
 
 if __name__ == "__main__":
     input_raster = arcpy.GetParameterAsText(0)
-    some_data = EnumRasterToNumPyArray(input_raster, num_rows=None, num_cols=2)
-    #for block in some_data:
-        #arcpy.AddMessage("first_element is {}".format(block[0][0]))
-        #arcpy.AddMessage("row is {}".format(block))
+    some_data = EnumRasterToNumPyArray(input_raster, num_rows=1, num_cols=None)
+    for block in some_data:
+        arcpy.AddMessage("first_element is {}".format(block[0][0]))
+        arcpy.AddMessage("row is {}".format(block))
